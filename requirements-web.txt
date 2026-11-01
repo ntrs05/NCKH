@@ -1,0 +1,4 @@
+# Giao diện web (tuỳ chọn): cài thêm khi dùng scripts/serve_web.py
+-r requirements.txt
+fastapi>=0.115
+uvicorn>=0.30

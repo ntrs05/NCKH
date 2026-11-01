@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="vi">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Gia sư Toán tiểu học</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+  <main class="book">
+    <header>
+      <h1>Gia sư Toán tiểu học</h1>
+      <div class="modes" id="modes">
+        <button type="button" data-mode="socratic" aria-pressed="true">Gợi mở từng bước</button>
+        <button type="button" data-mode="visual" aria-pressed="false">Sơ đồ đoạn thẳng</button>
+        <button type="button" data-mode="worked" aria-pressed="false">Bài giải mẫu</button>
+      </div>
+      <p id="hint"></p>
+    </header>
+    <section id="log" aria-live="polite" aria-label="Cuộc trò chuyện">
+      <div id="empty">
+        <h2>Em đang gặp bài toán nào?</h2>
+        <p>Gõ đề bài vào ô bên dưới, hoặc chọn một bài mẫu.</p>
+        <div class="chips">
+          <button type="button" class="chip" data-q="Tìm x, biết: x + 18 = 45">Tìm x: x + 18 = 45</button>
+          <button type="button" class="chip"
+            data-q="Hai bạn An và Bình có tổng cộng 24 cái kẹo. An có nhiều hơn Bình 6 cái kẹo. Hỏi mỗi bạn có bao nhiêu cái kẹo?">Bài
+            tổng – hiệu (kẹo)</button>
+          <button type="button" class="chip"
+            data-q="Một ô tô đi quãng đường dài 120 km trong thời gian 2 giờ 30 phút. Hãy tính vận tốc của ô tô.">Bài
+            vận tốc (ô tô)</button>
+        </div>
+      </div>
+    </section>
+    <form id="form" autocomplete="off">
+      <textarea id="input" rows="1" maxlength="500" placeholder="Nhập đề bài hoặc câu trả lời của em…"
+        aria-label="Tin nhắn"></textarea>
+      <button class="send" id="send" type="submit">Gửi</button>
+      <button class="reset" id="reset" type="button">Làm mới</button>
+    </form>
+    <footer>Gia sư AI có thể nhầm. Em hãy kiểm tra lại với thầy cô hoặc bố mẹ nhé.</footer>
+  </main>
+  <script>
+    const HINTS = { socratic: "Thầy/cô hỏi từng bước để em tự tìm ra đáp số.", visual: "Hướng dẫn giải bằng sơ đồ đoạn thẳng.", worked: "Bài giải mẫu đầy đủ: lời giải, phép tính và đáp số." };
+    const $ = id => document.getElementById(id);
+    const log = $("log"), input = $("input"), empty = $("empty"), sendBtn = $("send"), resetBtn = $("reset");
+    // apiBase: để trống = cùng tên miền với trang (đổi khi API nằm ở nơi khác).
+    const CONFIG = { apiBase: "" };
+    let mode = "socratic", sid = newId(), busy = false;
+
+    function newId() { return (crypto.randomUUID ? crypto.randomUUID() : Date.now() + "" + Math.random().toString(16).slice(2)).replace(/-/g, "") }
+    function setBusy(v) { busy = v; sendBtn.disabled = v; resetBtn.disabled = v }
+    function grow() { input.style.height = "auto"; input.style.height = Math.min(input.scrollHeight, 140) + "px" }
+
+    function add(kind, text, typing) {
+      const d = document.createElement("div");
+      d.className = "msg " + kind;
+      if (kind === "err") d.setAttribute("role", "alert");
+      if (kind === "tutor" || kind === "me") { const w = document.createElement("b"); w.className = "who"; w.textContent = kind === "me" ? "Em" : "Gia sư"; d.append(w) }
+      if (typing) { const s = document.createElement("span"); s.className = "dots"; s.innerHTML = "<span></span><span></span><span></span>"; s.setAttribute("aria-label", "Gia sư đang viết"); d.append(s) }
+      else body(d, text);
+      log.append(d); log.scrollTop = log.scrollHeight; return d;
+    }
+
+    // Dòng sơ đồ đoạn thẳng (|----|) hiện trong khối chữ đều; phần còn lại là văn bản thường.
+    function body(d, text) {
+      let run = [], diag = false;
+      const flush = () => {
+        if (!run.length) return;
+        if (diag) { const p = document.createElement("pre"); p.className = "diagram"; p.textContent = run.join("\n"); d.append(p) }
+        else d.append(document.createTextNode(run.join("\n")));
+        run = [];
+      };
+      for (const line of text.split("\n")) {
+        const isDiag = /\|-{2,}/.test(line);
+        if (isDiag !== diag) { flush(); diag = isDiag }
+        run.push(line);
+      }
+      flush();
+    }
+
+    async function send(text) {
+      text = text.trim();
+      if (!text || busy) return;
+      setBusy(true); empty.hidden = true; add("me", text); input.value = ""; grow();
+      const wait = add("tutor", "", true);
+      try {
+        const r = await fetch(CONFIG.apiBase + "/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session_id: sid, mode, message: text }) });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(typeof d.detail === "string" ? d.detail : "Tin nhắn chưa gửi được. Em thử lại nhé.");
+        wait.remove();
+        add("tutor", d.reply);
+      } catch (e) {
+        wait.remove();
+        add("err", e instanceof TypeError ? "Chưa kết nối được máy chủ. Hãy kiểm tra máy chủ đang chạy rồi gửi lại." : e.message);
+      } finally { setBusy(false); input.focus() }
+    }
+
+    function reset() {
+      fetch(CONFIG.apiBase + "/api/reset", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session_id: sid }) }).catch(() => { });
+      sid = newId();
+      log.querySelectorAll(".msg").forEach(n => n.remove());
+      empty.hidden = false; input.focus();
+    }
+
+    $("form").addEventListener("submit", e => { e.preventDefault(); send(input.value) });
+    input.addEventListener("input", grow);
+    input.addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(input.value) } });
+    resetBtn.addEventListener("click", reset);
+    document.querySelectorAll(".chip").forEach(c => c.addEventListener("click", () => send(c.dataset.q)));
+    document.querySelectorAll("#modes button").forEach(b => b.addEventListener("click", () => {
+      if (busy || b.dataset.mode === mode) return;
+      mode = b.dataset.mode;
+      document.querySelectorAll("#modes button").forEach(x => x.setAttribute("aria-pressed", x === b));
+      $("hint").textContent = HINTS[mode]; reset();
+    }));
+    $("hint").textContent = HINTS[mode];
+  </script>
+</body>
+
+</html>
